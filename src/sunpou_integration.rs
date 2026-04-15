@@ -149,6 +149,93 @@ impl<D, P> GaussianValueType for sunpou::scalar::Scalar<D, P> {
 }
 
 // ============================================================================
+// Rotation<F1, F2> — frame-tagged quaternion (3D axis-angle error manifold)
+// ============================================================================
+
+/// Nominal type for Rotation<F1, F2>: stores the quaternion reference point.
+pub struct RotationNominal<F1, F2> {
+    quat: nalgebra::UnitQuaternion<f64>,
+    _marker: core::marker::PhantomData<(F1, F2)>,
+}
+
+impl<F1, F2> Clone for RotationNominal<F1, F2> {
+    fn clone(&self) -> Self { Self { quat: self.quat, _marker: core::marker::PhantomData } }
+}
+
+impl<F1, F2> Default for RotationNominal<F1, F2> {
+    fn default() -> Self {
+        Self { quat: nalgebra::UnitQuaternion::identity(), _marker: core::marker::PhantomData }
+    }
+}
+
+impl<F1, F2> GaussianNominalType for RotationNominal<F1, F2> {
+    type Value = sunpou::rotation::Rotation<F1, F2>;
+    type Sigma = Vector3<f64>;
+    fn merge_sigma(&self, sigma: &Self::Sigma) -> Self::Value {
+        let delta_q = nalgebra::UnitQuaternion::new(*sigma);
+        sunpou::rotation::Rotation::from_raw(delta_q * self.quat)
+    }
+}
+
+impl<F1, F2> GaussianValueType for sunpou::rotation::Rotation<F1, F2> {
+    type Nominal = RotationNominal<F1, F2>;
+    type Sigma = Vector3<f64>;
+
+    fn algebraize(&self) -> (Self::Nominal, Self::Sigma) {
+        (
+            RotationNominal { quat: *self.as_raw(), _marker: core::marker::PhantomData },
+            Vector3::zeros(),
+        )
+    }
+    fn error(&self, criteria: &Self) -> Self::Sigma {
+        let delta_q = *self.as_raw() * criteria.as_raw().inverse();
+        delta_q.scaled_axis()
+    }
+}
+
+// ============================================================================
+// FrameDirection<F> — frame-tagged direction (2D tangent-space error manifold)
+// ============================================================================
+
+/// Nominal type for FrameDirection<F>: stores the direction reference point.
+pub struct FrameDirectionNominal<F> {
+    dir: sunpou::frame_direction::FrameDirection<F>,
+}
+
+impl<F> Clone for FrameDirectionNominal<F> {
+    fn clone(&self) -> Self { Self { dir: self.dir.clone() } }
+}
+
+impl<F> Default for FrameDirectionNominal<F> {
+    fn default() -> Self {
+        Self { dir: sunpou::frame_direction::FrameDirection::default() }
+    }
+}
+
+impl<F> GaussianNominalType for FrameDirectionNominal<F> {
+    type Value = sunpou::frame_direction::FrameDirection<F>;
+    type Sigma = nalgebra::Vector2<f64>;
+    fn merge_sigma(&self, sigma: &Self::Sigma) -> Self::Value {
+        self.dir.perturb(sigma)
+    }
+}
+
+impl<F> GaussianValueType for sunpou::frame_direction::FrameDirection<F> {
+    type Nominal = FrameDirectionNominal<F>;
+    type Sigma = nalgebra::Vector2<f64>;
+
+    fn algebraize(&self) -> (Self::Nominal, Self::Sigma) {
+        (
+            FrameDirectionNominal { dir: self.clone() },
+            nalgebra::Vector2::zeros(),
+        )
+    }
+    fn error(&self, criteria: &Self) -> Self::Sigma {
+        self.error_from(criteria)
+    }
+}
+
+// ============================================================================
 // GaussianSigmaType is already implemented for Vector1-6 in components.rs,
 // so no additional impls needed. The sigma representation is always a raw
 // nalgebra vector — sunpou's type safety is on the structured side.
