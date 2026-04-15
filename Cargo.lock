@@ -118,6 +118,7 @@ dependencies = [
  "nalgebra",
  "num-traits",
  "structured-estimator-macro",
+ "sunpou",
  "thiserror",
 ]
 
@@ -128,6 +129,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "sunpou"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "typenum",
 ]
 
 [[package]]

@@ -8,10 +8,16 @@ edition = "2024"
 description = "Structured Unscented Kalman Filter — UKF with structured state types supporting manifold operations (quaternion, direction, etc.)"
 license = "MIT"
 
+[features]
+default = []
+sunpou = ["dep:sunpou"]
+
 [dependencies]
 nalgebra = { version = "0.33", default-features = false, features = ["libm"] }
 num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 thiserror = { version = "2", default-features = false }
 structured-estimator-macro = { path = "./structured-estimator-macro" }
+sunpou = { path = "../sunpou", optional = true }
 
 [dev-dependencies]
+sunpou = { path = "../sunpou" }
