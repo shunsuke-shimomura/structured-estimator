@@ -1,0 +1,17 @@
+[workspace]
+members = [".", "structured-estimator-macro"]
+
+[package]
+name = "structured-estimator"
+version = "0.1.0"
+edition = "2024"
+description = "Structured Unscented Kalman Filter — UKF with structured state types supporting manifold operations (quaternion, direction, etc.)"
+license = "MIT"
+
+[dependencies]
+nalgebra = { version = "0.33", default-features = false, features = ["libm"] }
+num-traits = { version = "0.2", default-features = false, features = ["libm"] }
+thiserror = { version = "2", default-features = false }
+structured-estimator-macro = { path = "./structured-estimator-macro" }
+
+[dev-dependencies]
