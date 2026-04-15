@@ -15,3 +15,6 @@ pub mod components;
 pub mod ukf;
 pub mod value_structs;
 pub use structured_estimator_macro::{EstimationGaussianInput, EstimationOutputStruct, EstimationState};
+
+#[cfg(feature = "sunpou")]
+pub mod sunpou_integration;

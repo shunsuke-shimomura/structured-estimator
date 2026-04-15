@@ -1,0 +1,270 @@
+//! Integration test: sunpou types with structured-estimator UKF.
+//!
+//! Verifies that FrameVec, UnitVec, and Scalar with sunpou's type-level
+//! dimensions and prefixes work correctly as UKF state/observation/input fields.
+
+#![cfg(feature = "sunpou")]
+
+use nalgebra::{Matrix3, SMatrix, Vector3};
+use structured_estimator::{
+    EstimationOutputStruct, EstimationState,
+    ukf::{ObservationModel, PropagationModel, UKFParameters, UnscentedKalmanFilter},
+    value_structs::EmptyInput,
+};
+use sunpou::frame_vec::FrameVec;
+use sunpou::prefix::*;
+use sunpou::prelude::*;
+
+// ---- Frame markers ----
+struct Eci;
+
+// ---- State with sunpou types: position (km) + velocity (km/s) in ECI ----
+
+#[derive(EstimationState, Clone, Debug)]
+struct OrbitalState {
+    position: FrameVec<Eci, Length, Kilo>,
+    velocity: FrameVec<Eci, Velocity, Kilo>,
+}
+
+// ---- Gaussian input (none for this simple test) ----
+
+// ---- Propagation model: simple linear x' = x + v*dt ----
+
+struct LinearPropagation;
+
+impl PropagationModel for LinearPropagation {
+    type State = OrbitalState;
+    type DeterministicInput = EmptyInput;
+    type GaussianInput = EmptyInput;
+    type Time = f64;
+    type Dt = f64;
+
+    fn propagate(
+        &self,
+        state: &Self::State,
+        _det: &Self::DeterministicInput,
+        _gi: &Self::GaussianInput,
+        _time: &Self::Time,
+        dt: &Self::Dt,
+    ) -> Self::State {
+        // position += velocity * dt
+        // Note: FrameVec doesn't support direct scalar*vec with f64,
+        // so we work with raw values and re-wrap
+        let new_pos_raw = state.position.as_raw() + state.velocity.as_raw() * *dt;
+        OrbitalState {
+            position: FrameVec::from_raw(new_pos_raw),
+            velocity: state.velocity, // constant velocity
+        }
+    }
+}
+
+// ---- Observation: position only ----
+
+#[derive(Debug, Clone, EstimationOutputStruct)]
+struct PositionObservation {
+    position: FrameVec<Eci, Length, Kilo>,
+}
+
+struct PositionObservationModel;
+
+impl ObservationModel for PositionObservationModel {
+    type State = OrbitalState;
+    type DeterministicInput = EmptyInput;
+    type GaussianInput = EmptyInput;
+    type Time = f64;
+    type Observation = PositionObservation;
+
+    fn predict(
+        &self,
+        state: &Self::State,
+        _det: &Self::DeterministicInput,
+        _gi: &Self::GaussianInput,
+        _time: &Self::Time,
+    ) -> Self::Observation {
+        PositionObservation {
+            position: state.position,
+        }
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[test]
+fn test_sunpou_state_initialization() {
+    let state = OrbitalState {
+        position: FrameVec::<Eci, Length, Kilo>::new(7000.0, 0.0, 0.0),
+        velocity: FrameVec::<Eci, Velocity, Kilo>::new(0.0, 7.5, 0.0),
+    };
+
+    let initial_cov = SMatrix::<f64, 6, 6>::identity() * 1e3;
+
+    let ukf: UnscentedKalmanFilter<
+        OrbitalState, f64, f64, LinearPropagation, EmptyInput,
+        EmptyInput, 6, 0,
+    > = UnscentedKalmanFilter::new(
+        LinearPropagation,
+        state,
+        initial_cov,
+        &0.0_f64,
+        UKFParameters::new(1e-3, 2.0, 0.0),
+    );
+
+    // State preserved
+    assert!((ukf.state().position.x() - 7000.0).abs() < 1e-10);
+    assert!((ukf.state().velocity.y() - 7.5).abs() < 1e-10);
+}
+
+#[test]
+fn test_sunpou_propagation() {
+    let state = OrbitalState {
+        position: FrameVec::<Eci, Length, Kilo>::new(7000.0, 0.0, 0.0),
+        velocity: FrameVec::<Eci, Velocity, Kilo>::new(0.0, 7.5, 0.0),
+    };
+
+    let mut ukf: UnscentedKalmanFilter<
+        OrbitalState, f64, f64, LinearPropagation, EmptyInput,
+        EmptyInput, 6, 0,
+    > = UnscentedKalmanFilter::new(
+        LinearPropagation,
+        state,
+        SMatrix::<f64, 6, 6>::identity() * 1.0,
+        &0.0_f64,
+        UKFParameters::new(1e-3, 2.0, 0.0),
+    );
+
+    // Propagate 60 seconds
+    ukf.propagate(&EmptyInput, &EmptyInput, None, &60.0).unwrap();
+
+    // position_y should increase by velocity_y * dt = 7.5 * 60 = 450 km
+    assert!((ukf.state().position.y() - 450.0).abs() < 1.0,
+        "Expected ~450 km, got {} km", ukf.state().position.y());
+    // velocity should remain ~7.5 km/s
+    assert!((ukf.state().velocity.y() - 7.5).abs() < 0.1);
+}
+
+#[test]
+fn test_sunpou_update() {
+    let state = OrbitalState {
+        position: FrameVec::<Eci, Length, Kilo>::new(7000.0, 0.0, 0.0),
+        velocity: FrameVec::<Eci, Velocity, Kilo>::new(0.0, 7.5, 0.0),
+    };
+
+    let mut ukf: UnscentedKalmanFilter<
+        OrbitalState, f64, f64, LinearPropagation, EmptyInput,
+        EmptyInput, 6, 0,
+    > = UnscentedKalmanFilter::new(
+        LinearPropagation,
+        state,
+        SMatrix::<f64, 6, 6>::identity() * 100.0, // large initial uncertainty
+        &0.0_f64,
+        UKFParameters::new(1e-3, 2.0, 0.0),
+    );
+
+    let obs_model = PositionObservationModel;
+
+    // Measurement says position is [7001, 0, 0] km
+    let measurement = PositionObservation {
+        position: FrameVec::<Eci, Length, Kilo>::new(7001.0, 0.0, 0.0),
+    };
+
+    let meas_noise = {
+        let mut cov = SMatrix::<f64, 3, 3>::zeros();
+        cov.fixed_view_mut::<3, 3>(0, 0).copy_from(&(Matrix3::identity() * 0.01));
+        cov
+    };
+
+    let cov_before = ukf.covariance().diagonal().sum();
+
+    ukf.update(
+        &obs_model, &measurement, &EmptyInput, &EmptyInput,
+        &0.0, meas_noise,
+    ).unwrap();
+
+    let cov_after = ukf.covariance().diagonal().sum();
+
+    // Covariance should decrease after update
+    assert!(cov_after < cov_before, "Update should reduce covariance");
+
+    // Position should move toward measurement
+    assert!(ukf.state().position.x() > 7000.0, "Position should move toward measurement");
+}
+
+#[test]
+fn test_sunpou_convergence() {
+    // True state
+    let _true_pos = FrameVec::<Eci, Length, Kilo>::new(7000.0, 0.0, 0.0);
+    let true_vel = FrameVec::<Eci, Velocity, Kilo>::new(0.0, 7.5, 0.0);
+
+    // Initial estimate with 10 km error
+    let est_pos = FrameVec::<Eci, Length, Kilo>::new(7010.0, 0.0, 0.0);
+
+    let mut ukf: UnscentedKalmanFilter<
+        OrbitalState, f64, f64, LinearPropagation, EmptyInput,
+        EmptyInput, 6, 0,
+    > = UnscentedKalmanFilter::new(
+        LinearPropagation,
+        OrbitalState { position: est_pos, velocity: true_vel },
+        SMatrix::<f64, 6, 6>::identity() * 1000.0,
+        &0.0_f64,
+        UKFParameters::new(1e-3, 2.0, 0.0),
+    );
+
+    let obs_model = PositionObservationModel;
+    let meas_noise = Matrix3::identity() * 0.01;
+    let dt = 1.0;
+
+    for i in 0..50 {
+        let time = (i + 1) as f64 * dt;
+
+        ukf.propagate(&EmptyInput, &EmptyInput, None, &time).unwrap();
+
+        // True position at this time
+        let true_pos_now = FrameVec::<Eci, Length, Kilo>::new(
+            7000.0,
+            7.5 * time,
+            0.0,
+        );
+
+        // Add small noise
+        let noise = Vector3::new(
+            0.01 * ((i * 7) as f64).sin(),
+            0.01 * ((i * 13) as f64).cos(),
+            0.01 * ((i * 19) as f64).sin(),
+        );
+        let measurement = PositionObservation {
+            position: FrameVec::from_raw(*true_pos_now.as_raw() + noise),
+        };
+
+        ukf.update(&obs_model, &measurement, &EmptyInput, &EmptyInput, &time, meas_noise).unwrap();
+    }
+
+    // Position error should be small
+    let true_final = FrameVec::<Eci, Length, Kilo>::new(7000.0, 7.5 * 50.0, 0.0);
+    let error = (ukf.state().position.as_raw() - true_final.as_raw()).norm();
+    assert!(error < 1.0, "Position should converge: error = {} km", error);
+}
+
+// ============================================================================
+// Verify that sunpou's type safety catches frame mismatches at compile time
+// (This is a conceptual test — the real check is that the code compiles only
+// when frames match)
+// ============================================================================
+
+#[test]
+fn test_sunpou_frame_consistency() {
+    // This compiles because all fields use Eci frame
+    let _state = OrbitalState {
+        position: FrameVec::<Eci, Length, Kilo>::new(7000.0, 0.0, 0.0),
+        velocity: FrameVec::<Eci, Velocity, Kilo>::new(0.0, 7.5, 0.0),
+    };
+
+    // If someone tried to define a state mixing frames:
+    //   struct BadState {
+    //       position: FrameVec<Eci, Length, Kilo>,
+    //       velocity: FrameVec<Body, Velocity, Kilo>,  // different frame!
+    //   }
+    // The PropagationModel would catch this when it tries to do frame-dependent
+    // operations (rotation, cross products) — sunpou prevents mixing frames.
+}
