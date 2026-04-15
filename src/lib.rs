@@ -12,7 +12,11 @@
 //! `EstimationGaussianInput`).
 
 pub mod components;
+pub mod ekf;
 pub mod ukf;
+
+#[cfg(feature = "autodiff")]
+pub mod autodiff;
 pub mod value_structs;
 pub use structured_estimator_macro::{EstimationGaussianInput, EstimationOutputStruct, EstimationState};
 

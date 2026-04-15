@@ -11,6 +11,7 @@ license = "MIT"
 [features]
 default = []
 sunpou = ["dep:sunpou"]
+autodiff = ["dep:num-dual"]
 
 [dependencies]
 nalgebra = { version = "0.33", default-features = false, features = ["libm"] }
@@ -18,6 +19,7 @@ num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 thiserror = { version = "2", default-features = false }
 structured-estimator-macro = { path = "./structured-estimator-macro" }
 sunpou = { path = "../sunpou", optional = true }
+num-dual = { version = "0.10", optional = true }
 
 [dev-dependencies]
 sunpou = { path = "../sunpou" }
