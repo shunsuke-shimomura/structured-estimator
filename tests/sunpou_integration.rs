@@ -268,3 +268,77 @@ fn test_sunpou_frame_consistency() {
     // The PropagationModel would catch this when it tries to do frame-dependent
     // operations (rotation, cross products) — sunpou prevents mixing frames.
 }
+
+// ============================================================================
+// Block covariance access — typed sub-matrices from raw covariance
+// ============================================================================
+
+#[test]
+fn test_covariance_blocks() {
+    let state = OrbitalState {
+        position: FrameVec::<Eci, Length, Kilo>::new(7000.0, 0.0, 0.0),
+        velocity: FrameVec::<Eci, Velocity, Kilo>::new(0.0, 7.5, 0.0),
+    };
+
+    let mut ukf: UnscentedKalmanFilter<
+        OrbitalState, f64, f64, LinearPropagation, EmptyInput,
+        EmptyInput, 6, 0,
+    > = UnscentedKalmanFilter::new(
+        LinearPropagation,
+        state,
+        SMatrix::<f64, 6, 6>::identity() * 100.0,
+        &0.0_f64,
+        UKFParameters::new(1e-3, 2.0, 0.0),
+    );
+
+    // Extract typed covariance blocks
+    let blocks = OrbitalState::covariance_blocks(ukf.covariance());
+
+    // position_position: 3×3 block at (0,0) — this is P_rr
+    let p_rr = blocks.position_position();
+    assert_eq!(p_rr.nrows(), 3);
+    assert_eq!(p_rr.ncols(), 3);
+    assert!((p_rr[(0, 0)] - 100.0).abs() < 1e-10);
+
+    // velocity_velocity: 3×3 block at (3,3) — this is P_vv
+    let p_vv = blocks.velocity_velocity();
+    assert!((p_vv[(0, 0)] - 100.0).abs() < 1e-10);
+
+    // position_velocity: 3×3 block at (0,3) — this is P_rv (cross-covariance)
+    let p_rv = blocks.position_velocity();
+    assert!((p_rv[(0, 0)]).abs() < 1e-10); // initially zero for diagonal cov
+
+    // After propagation, cross-covariance should become non-zero
+    ukf.propagate(&EmptyInput, &EmptyInput, None, &60.0).unwrap();
+
+    let blocks_after = OrbitalState::covariance_blocks(ukf.covariance());
+    let p_rr_after = blocks_after.position_position();
+    let p_rv_after = blocks_after.position_velocity();
+
+    // P_rr should grow (uncertainty increases)
+    assert!(p_rr_after[(0, 0)] > p_rr[(0, 0)],
+        "Position covariance should grow after propagation");
+
+    // Cross-covariance may become non-zero
+    // (depends on UKF sigma point spread, but generally true for coupled state)
+}
+
+#[test]
+fn test_covariance_blocks_sunpou_typed() {
+    // The real power: wrap raw blocks in sunpou's FrameElemMat for type safety
+    use sunpou::frame_elem_mat::FrameElemMat;
+
+    let cov = SMatrix::<f64, 6, 6>::identity() * 42.0;
+    let blocks = OrbitalState::covariance_blocks(&cov);
+
+    // P_rr block has dimension Length × Length in ECI frame with prefix Kilo+Kilo = Mega
+    // (conceptually — we wrap it manually since the macro returns raw SMatrix)
+    let p_rr_raw = blocks.position_position();
+    let _p_rr: FrameElemMat<Eci, Area, 3, 3, Mega> =
+        FrameElemMat::from_raw(p_rr_raw);
+
+    // P_rv block has dimension Length × Velocity
+    let p_rv_raw = blocks.position_velocity();
+    let _p_rv: FrameElemMat<Eci, LengthVelocity, 3, 3, Mega> =
+        FrameElemMat::from_raw(p_rv_raw);
+}

@@ -112,6 +112,57 @@ pub fn derive_estimation_state(input: TokenStream) -> TokenStream {
     let dim_expr =
         dim_expr.expect("EstimationState 対象 struct には 1 つ以上のフィールドが必要です");
 
+    // ---------- ブロック共分散アクセサ生成 ----------
+
+    let cov_blocks_name = syn::Ident::new(&format!("{}CovarianceBlocks", name), name.span());
+
+    // 各フィールドの (ident, ty, sigma_dim_expr) を集める
+    struct FieldDimInfo {
+        ident: syn::Ident,
+        dim_expr: proc_macro2::TokenStream,
+    }
+    let mut field_dims: Vec<FieldDimInfo> = Vec::new();
+    for field in fields_named.iter() {
+        let ident = field.ident.as_ref().unwrap().clone();
+        let ty = &field.ty;
+        let sigma_ty = quote! { <#ty as ::structured_estimator::components::GaussianValueType>::Sigma };
+        let dim = quote! { <#sigma_ty as ::structured_estimator::components::GaussianSigmaType>::DIM };
+        field_dims.push(FieldDimInfo { ident, dim_expr: dim });
+    }
+
+    // 各ペア (i, j) のアクセサを生成
+    let mut cov_block_accessors = Vec::new();
+    for (i, fi) in field_dims.iter().enumerate() {
+        for (j, fj) in field_dims.iter().enumerate() {
+            let accessor_name = format_ident!("{}_{}", fi.ident, fj.ident);
+            let row_dim = &fi.dim_expr;
+            let col_dim = &fj.dim_expr;
+
+            // 行オフセット: フィールド 0..i の dim の合計
+            let row_offset = if i == 0 {
+                quote! { 0 }
+            } else {
+                let dims: Vec<_> = field_dims[..i].iter().map(|f| &f.dim_expr).collect();
+                quote! { #(#dims)+* }
+            };
+
+            // 列オフセット: フィールド 0..j の dim の合計
+            let col_offset = if j == 0 {
+                quote! { 0 }
+            } else {
+                let dims: Vec<_> = field_dims[..j].iter().map(|f| &f.dim_expr).collect();
+                quote! { #(#dims)+* }
+            };
+
+            cov_block_accessors.push(quote! {
+                /// Block (#i, #j): covariance sub-matrix
+                #vis fn #accessor_name(&self) -> ::nalgebra::SMatrix<f64, { #row_dim }, { #col_dim }> {
+                    self.raw.fixed_view::<{ #row_dim }, { #col_dim }>(#row_offset, #col_offset).clone_owned()
+                }
+            });
+        }
+    }
+
     // ---------- 生成コード ----------
 
     let expanded = quote! {
@@ -201,6 +252,24 @@ pub fn derive_estimation_state(input: TokenStream) -> TokenStream {
 
         impl #sigma_name {
             #vis const DIM: usize = #dim_expr;
+        }
+
+        // ブロック共分散アクセサ: SMatrix<f64, DIM, DIM> から各フィールドペアの部分行列を取得
+        #vis struct #cov_blocks_name<'a> {
+            raw: &'a ::nalgebra::SMatrix<f64, { #dim_expr }, { #dim_expr }>,
+        }
+
+        impl #cov_blocks_name<'_> {
+            #(#cov_block_accessors)*
+        }
+
+        impl #name {
+            /// Extract typed block views from a raw covariance matrix.
+            #vis fn covariance_blocks(
+                covariance: &::nalgebra::SMatrix<f64, { #dim_expr }, { #dim_expr }>,
+            ) -> #cov_blocks_name<'_> {
+                #cov_blocks_name { raw: covariance }
+            }
         }
 
         // struct -> SVector 変換
