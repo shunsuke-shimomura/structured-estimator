@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "structured-estimator-macro", "structured-estimator-codegen"]
+members = [".", "structured-estimator-macro"]
 
 [package]
 name = "structured-estimator"

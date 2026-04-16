@@ -569,13 +569,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "structured-estimator-codegen"
-version = "0.1.0"
-dependencies = [
- "nalgebra",
-]
-
-[[package]]
 name = "structured-estimator-macro"
 version = "0.1.0"
 dependencies = [
