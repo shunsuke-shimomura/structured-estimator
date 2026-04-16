@@ -1,9 +1,0 @@
-[package]
-name = "structured-estimator-codegen"
-version = "0.1.0"
-edition = "2024"
-description = "Code generator for structured-estimator: symbolic Jacobian computation at build time"
-license = "MIT"
-
-[dev-dependencies]
-nalgebra = "0.33"
