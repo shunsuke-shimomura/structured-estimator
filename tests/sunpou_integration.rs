@@ -342,3 +342,89 @@ fn test_covariance_blocks_sunpou_typed() {
     let _p_rv: FrameElemMat<Eci, LengthVelocity, 3, 3, Mega> =
         FrameElemMat::from_raw(p_rv_raw);
 }
+
+// ============================================================================
+// Jacobian blocks with sunpou types (#16)
+// ============================================================================
+
+#[test]
+fn test_jacobian_blocks_sunpou_typed() {
+    use sunpou::frame_elem_mat::FrameElemMat;
+    use structured_estimator::ekf::finite_difference_jacobian;
+
+    let state = OrbitalState {
+        position: FrameVec::<Eci, Length, Kilo>::new(7000.0, 0.0, 0.0),
+        velocity: FrameVec::<Eci, Velocity, Kilo>::new(0.0, 7.5, 0.0),
+    };
+    let dt = 60.0;
+
+    // Compute Jacobian via finite differences
+    let jac = finite_difference_jacobian::<OrbitalState, OrbitalState, _, 6, 6>(
+        &state,
+        &|s| LinearPropagation.propagate(s, &EmptyInput, &EmptyInput, &0.0, &dt),
+        1e-7,
+    ).unwrap();
+
+    // Use covariance_blocks (same shape) to access Jacobian blocks
+    let blocks = OrbitalState::covariance_blocks(&jac);
+
+    // F_rr (∂position/∂position): Dimensionless in Eci frame, Base prefix
+    // For linear model: I (identity)
+    let f_rr: FrameElemMat<Eci, Dimensionless, 3, 3, Base> =
+        FrameElemMat::from_raw(blocks.position_position());
+    assert!((f_rr.as_raw() - nalgebra::Matrix3::identity()).norm() < 1e-5);
+
+    // F_rv (∂position/∂velocity): Time dimension (m / (m/s) = s)
+    // For linear model: dt * I
+    let f_rv: FrameElemMat<Eci, Time, 3, 3, Base> =
+        FrameElemMat::from_raw(blocks.position_velocity());
+    assert!((f_rv.as_raw()[(0, 0)] - dt).abs() < 1e-3);
+
+    // F_vr (∂velocity/∂position): InvTime dimension
+    // For linear model: 0
+    let f_vr: FrameElemMat<Eci, InvTime, 3, 3, Base> =
+        FrameElemMat::from_raw(blocks.velocity_position());
+    assert!(f_vr.as_raw().norm() < 1e-5);
+
+    // F_vv (∂velocity/∂velocity): Dimensionless
+    // For linear model: I
+    let f_vv: FrameElemMat<Eci, Dimensionless, 3, 3, Base> =
+        FrameElemMat::from_raw(blocks.velocity_velocity());
+    assert!((f_vv.as_raw() - nalgebra::Matrix3::identity()).norm() < 1e-5);
+}
+
+#[test]
+fn test_structured_ekf_with_sunpou() {
+    use structured_estimator::ekf_model::{EkfPropagationModel, EkfObservationModel, StructuredEkf};
+
+    // Use finite-diff default (no manual Jacobian needed)
+    impl EkfPropagationModel<6> for LinearPropagation {}
+    impl EkfObservationModel<6, 3> for PositionObservationModel {}
+
+    let mut ekf = StructuredEkf::new(
+        LinearPropagation,
+        OrbitalState {
+            position: FrameVec::<Eci, Length, Kilo>::new(7010.0, 0.0, 0.0), // 10km error
+            velocity: FrameVec::<Eci, Velocity, Kilo>::new(0.0, 7.5, 0.0),
+        },
+        SMatrix::<f64, 6, 6>::identity() * 1000.0,
+        &0.0_f64,
+    );
+
+    let obs = PositionObservationModel;
+    let dt = 1.0;
+    let meas_noise = nalgebra::Matrix3::identity() * 0.01;
+
+    for i in 0..50 {
+        let time = (i + 1) as f64 * dt;
+        ekf.propagate::<EmptyInput, 0>(&EmptyInput, &EmptyInput, None, &time).unwrap();
+
+        let true_pos = FrameVec::<Eci, Length, Kilo>::new(7000.0, 7.5 * time, 0.0);
+        let meas = PositionObservation { position: true_pos };
+        ekf.update(&obs, &meas, &EmptyInput, &EmptyInput, &time, meas_noise).unwrap();
+    }
+
+    let true_final = FrameVec::<Eci, Length, Kilo>::new(7000.0, 7.5 * 50.0, 0.0);
+    let error = (ekf.state().position.as_raw() - true_final.as_raw()).norm();
+    assert!(error < 1.0, "Sunpou StructuredEkf should converge: err = {} km", error);
+}
