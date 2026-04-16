@@ -13,6 +13,8 @@
 
 pub mod components;
 pub mod ekf;
+pub mod ekf_model;
+pub mod manifold_jacobian;
 pub mod ukf;
 
 #[cfg(feature = "autodiff")]
