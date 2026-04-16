@@ -39,6 +39,10 @@ pub struct ModelBuilderV2 {
     propagation: Option<PropagationSpec>,
     /// Parameters used in propagation
     params: Vec<ParamSpec>,
+    /// Extra use statements to include (e.g., sunpou imports)
+    extra_uses: Vec<String>,
+    /// Frame type name for sunpou (e.g., "Eci")
+    frame: Option<String>,
 }
 
 #[derive(Clone)]
@@ -62,7 +66,19 @@ impl ModelBuilderV2 {
             fields: Vec::new(),
             propagation: None,
             params: Vec::new(),
+            extra_uses: Vec::new(),
+            frame: None,
         }
+    }
+
+    /// Set the coordinate frame name for sunpou type annotations.
+    pub fn set_frame(&mut self, frame: &str) {
+        self.frame = Some(frame.to_string());
+    }
+
+    /// Add an extra `use` statement to the generated code.
+    pub fn add_use(&mut self, use_stmt: &str) {
+        self.extra_uses.push(use_stmt.to_string());
     }
 
     /// Add a vector field (dim components accessed via as_raw()[i]).
@@ -132,6 +148,9 @@ impl ModelBuilderV2 {
         writeln!(out, "use structured_estimator::ekf_model::EkfPropagationModel;").unwrap();
         writeln!(out, "use structured_estimator::ukf::PropagationModel;").unwrap();
         writeln!(out, "use structured_estimator::components::KalmanFilterError;").unwrap();
+        for use_stmt in &self.extra_uses {
+            writeln!(out, "use {};", use_stmt).unwrap();
+        }
         writeln!(out).unwrap();
 
         // State field layout comment
@@ -160,7 +179,20 @@ impl ModelBuilderV2 {
         writeln!(out, "// F[i][j] = ∂f_i/∂x_j — symbolically differentiated").unwrap();
         writeln!(out, "//").unwrap();
 
-        // Generate block structure comments
+        // Generate block structure comments with sunpou type hints
+        if let Some(ref frame) = self.frame {
+            writeln!(out, "// sunpou block types (for FrameElemMat wrapping):").unwrap();
+            for fi in &self.fields {
+                for fj in &self.fields {
+                    writeln!(out, "//   ({}, {}): FrameElemMat<{}, Dim({}/{}), {}, {}>",
+                        fi.name, fj.name, frame,
+                        fi.type_str, fj.type_str,
+                        fi.dim, fj.dim).unwrap();
+                }
+            }
+            writeln!(out, "//").unwrap();
+        }
+
         for (fi_name, fi_start, fi_end) in &prop.field_ranges {
             for (fj_name, fj_start, fj_end) in &prop.field_ranges {
                 writeln!(out, "// Block ({}, {}): {}×{} — ∂{}/∂{}",
@@ -334,5 +366,43 @@ mod tests {
         assert!(code.contains("self.mu"));
         // Should have the gravity Jacobian term 2*mu/x^3
         assert!(code.contains("position_0"));
+    }
+
+    #[test]
+    fn test_v2_sunpou_integration() {
+        let mut m = ModelBuilderV2::new("OrbitalEKF", "OrbitalState");
+
+        // Set sunpou frame and use statements
+        m.set_frame("Eci");
+        m.add_use("sunpou::prelude::*");
+        m.add_use("sunpou::prefix::*");
+        m.add_use("sunpou::frame_elem_mat::FrameElemMat");
+
+        let pos = m.vec_field("position", 3, "FrameVec<Eci, Length, Kilo>");
+        let vel = m.vec_field("velocity", 3, "FrameVec<Eci, Velocity, Kilo>");
+        let dt = m.param("dt", "dt");
+
+        m.set_propagation(vec![
+            pos[0].clone() + vel[0].clone() * dt.clone(),
+            pos[1].clone() + vel[1].clone() * dt.clone(),
+            pos[2].clone() + vel[2].clone() * dt.clone(),
+            vel[0].clone(),
+            vel[1].clone(),
+            vel[2].clone(),
+        ]);
+
+        let code = m.generate_code();
+        println!("{}", code);
+
+        // Should have sunpou imports
+        assert!(code.contains("use sunpou::prelude::*"));
+        assert!(code.contains("use sunpou::prefix::*"));
+        assert!(code.contains("FrameElemMat"));
+
+        // Should have sunpou block type hints
+        assert!(code.contains("sunpou block types"));
+        assert!(code.contains("FrameElemMat<Eci"));
+        assert!(code.contains("FrameVec<Eci, Length, Kilo>"));
+        assert!(code.contains("FrameVec<Eci, Velocity, Kilo>"));
     }
 }
