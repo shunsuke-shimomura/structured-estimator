@@ -29,6 +29,8 @@
 
 pub mod expr;
 pub mod model;
+pub mod model_v2;
 
 pub use expr::Expr;
 pub use model::ModelBuilder;
+pub use model_v2::ModelBuilderV2;
