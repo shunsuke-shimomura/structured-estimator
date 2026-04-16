@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "structured-estimator-macro"]
+members = [".", "structured-estimator-macro", "structured-estimator-codegen"]
 
 [package]
 name = "structured-estimator"
@@ -23,3 +23,8 @@ num-dual = { version = "0.10", optional = true }
 
 [dev-dependencies]
 sunpou = { path = "../sunpou" }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "ekf_overhead"
+harness = false
