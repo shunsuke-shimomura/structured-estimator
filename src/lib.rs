@@ -1,8 +1,8 @@
 //! # structured-estimator
 //!
-//! Structured Unscented Kalman Filter (UKF) library.
+//! Structured Unscented Kalman Filter (UKF) and Extended Kalman Filter (EKF) library.
 //!
-//! Supports structured state types with manifold operations:
+//! `no_std` compatible. Supports structured state types with manifold operations:
 //! - Quaternion (3D error manifold for 4D quaternion)
 //! - Direction (2D error manifold on 3D unit sphere)
 //! - Standard vectors (Vector1–Vector6)
@@ -10,6 +10,8 @@
 //! State, observation, and input types are composed from these components
 //! using derive macros (`EstimationState`, `EstimationOutputStruct`,
 //! `EstimationGaussianInput`).
+
+#![no_std]
 
 pub mod components;
 pub mod ekf;

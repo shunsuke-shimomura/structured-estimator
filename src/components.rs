@@ -1,8 +1,8 @@
 use core::ops::{Add, Mul};
 
 use nalgebra::{
-    Matrix3, Rotation3, Unit, UnitQuaternion, UnitVector3, Vector1, Vector2, Vector3, Vector4,
-    Vector5, Vector6,
+    ComplexField, Matrix3, Rotation3, Unit, UnitQuaternion, UnitVector3, Vector1, Vector2, Vector3,
+    Vector4, Vector5, Vector6,
 };
 
 #[derive(Debug, thiserror::Error, Clone)]
